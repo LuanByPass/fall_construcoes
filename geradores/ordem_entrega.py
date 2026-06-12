@@ -1,6 +1,9 @@
 """
 Gerador de Ordem de Entrega (PDF) — VIA DUPLA COM PAGINAÇÃO
-Tabela preenche todo o espaço. Comprovante rente à borda inferior.
+- Valor total da compra no lugar do frete
+- Número da página no cabeçalho
+- Informações da empresa organizadas
+- Sem aviso "continua na próxima página"
 """
 import os
 import subprocess
@@ -48,7 +51,6 @@ class OrdemEntregaGenerator:
 
     # ── PAGINAÇÃO ──
     def _dedup_itens(self, itens_raw):
-        """Remove itens duplicados por código+nome+qtd."""
         seen = set()
         itens = []
         for item in itens_raw:
@@ -62,7 +64,6 @@ class OrdemEntregaGenerator:
         return itens
 
     def _calcular_layout_pagina1(self, tem_observacao):
-        """Calcula layout bottom-up. Retorna (max_linhas, y_tabela_top, y_tabela_bottom)."""
         margem_inf = 10 * mm
         espaco = 3 * mm
 
@@ -105,11 +106,10 @@ class OrdemEntregaGenerator:
         return max(0, max_linhas), y_tabela_top, y_tabela_bottom
 
     def _calcular_layout_continuacao(self):
-        """Calcula layout para páginas de continuação com resumo + tabela + rodapé."""
         margem_inf = 10 * mm
         espaco = 5 * mm
         h_header = 18 * mm
-        h_resumo = 14 * mm  # resumo do destinatário
+        h_resumo = 14 * mm
         h_rodape = 12 * mm
 
         y_topo = self.page_height - self.margin
@@ -117,9 +117,7 @@ class OrdemEntregaGenerator:
         y_after_resumo = y_after_header - h_resumo - espaco
 
         altura_disponivel = y_after_resumo - margem_inf - h_rodape
-        max_linhas = int((altura_disponivel - 10 * mm) / (6 * mm))
-        # Limita a 20 linhas para não ficar muito vazio
-        return min(max(0, max_linhas), 20)
+        return min(max(0, int((altura_disponivel - 10 * mm) / (6 * mm))), 20)
 
     def gerar(self, entrega, venda=None, output_path=None):
         if output_path is None:
@@ -136,6 +134,10 @@ class OrdemEntregaGenerator:
             if venda and venda.get("itens"):
                 itens = self._dedup_itens(venda.get("itens", []))
 
+            # Calcula valor total da venda
+            valor_total = self._to_float(venda.get("total")) if venda else 0.0
+            entrega["valor_total_venda"] = valor_total
+
             tem_obs = bool(entrega.get("observacoes"))
             max_p1, y_tabela_top, y_tabela_bottom = self._calcular_layout_pagina1(tem_obs)
             max_pn = self._calcular_layout_continuacao()
@@ -144,19 +146,20 @@ class OrdemEntregaGenerator:
             itens_p1 = itens[:max_p1]
             itens_restantes = itens[max_p1:]
 
-            # Preenche linhas vazias na página 1
             while len(itens_p1) < max_p1:
                 itens_p1.append({
                     "codigo": "", "produto_codigo": "", "produto_nome": "", "nome": "",
                     "quantidade": "", "preco_unitario": "", "preco": "", "subtotal": "",
                 })
 
+            total_paginas = 1 + (len(itens_restantes) + max_pn - 1) // max_pn if itens_restantes else 1
+
             # ═══════════════════════════════════════════════════════════════
             # PÁGINA 1
             # ═══════════════════════════════════════════════════════════════
             y = self.page_height - self.margin
 
-            y = self._draw_header(c, entrega, y, via="VIA DO CLIENTE")
+            y = self._draw_header(c, entrega, y, pagina=1, total_paginas=total_paginas, via="VIA DO CLIENTE")
             y -= 3 * mm
 
             y = self._draw_destinatario(c, entrega, y)
@@ -165,8 +168,7 @@ class OrdemEntregaGenerator:
             y = self._draw_detalhes_entrega(c, entrega, y)
             y -= 3 * mm
 
-            y = self._draw_itens(c, itens_p1, y, y_final=y_tabela_bottom,
-                                 mostrar_continua=(total_itens > max_p1))
+            y = self._draw_itens(c, itens_p1, y, y_final=y_tabela_bottom)
 
             if tem_obs:
                 y -= 3 * mm
@@ -179,7 +181,7 @@ class OrdemEntregaGenerator:
             y = self._draw_linha_corte(c, y)
             y -= 5 * mm
 
-            y = self._draw_header(c, entrega, y, via="VIA DA EMPRESA", compacto=True)
+            y = self._draw_header(c, entrega, y, pagina=1, total_paginas=total_paginas, via="VIA DA EMPRESA", compacto=True)
             y -= 3 * mm
 
             y = self._draw_destinatario_compacto(c, entrega, y)
@@ -188,14 +190,14 @@ class OrdemEntregaGenerator:
             y = self._draw_comprovante_recebimento(c, entrega, y)
 
             # ═══════════════════════════════════════════════════════════════
-            # PÁGINAS 2+: Continuação com resumo do destinatário
+            # PÁGINAS 2+
             # ═══════════════════════════════════════════════════════════════
             pagina_atual = 2
             while itens_restantes:
                 c.showPage()
                 y = self.page_height - self.margin
 
-                y = self._draw_header_continuacao(c, entrega, pagina_atual, y)
+                y = self._draw_header_continuacao(c, entrega, pagina_atual, total_paginas, y)
                 y -= 5 * mm
 
                 y = self._draw_resumo_continuacao(c, entrega, y)
@@ -204,7 +206,6 @@ class OrdemEntregaGenerator:
                 chunk = itens_restantes[:max_pn]
                 itens_restantes = itens_restantes[max_pn:]
 
-                # Preenche apenas até 5 linhas em branco (não a página inteira)
                 min_linhas = min(len(chunk) + 5, max_pn)
                 while len(chunk) < min_linhas:
                     chunk.append({
@@ -212,11 +213,10 @@ class OrdemEntregaGenerator:
                         "quantidade": "", "preco_unitario": "", "preco": "", "subtotal": "",
                     })
 
-                y = self._draw_itens(c, chunk, y, y_final=22*mm,
-                                     mostrar_continua=bool(itens_restantes))
+                y = self._draw_itens(c, chunk, y, y_final=22*mm)
                 y -= 5 * mm
 
-                y = self._draw_rodape_continuacao(c, y, pagina_atual)
+                y = self._draw_rodape_continuacao(c, y, pagina_atual, total_paginas)
                 pagina_atual += 1
 
             c.save()
@@ -239,7 +239,7 @@ class OrdemEntregaGenerator:
         except Exception as e:
             print(f"[ORDEM ENTREGA] Erro ao abrir PDF: {e}")
 
-    # ── HELPERS DE DESENHO ──
+    # ── HELPERS ──
     def _rect(self, c, x, y, w, h, stroke=1, fill=0):
         c.rect(x, y - h, w, h, stroke=stroke, fill=fill)
 
@@ -268,8 +268,8 @@ class OrdemEntregaGenerator:
         c.setFont(font, value_size)
         c.drawString(x, y - value_size - 1, self._to_str(value))
 
-    # ── CABEÇALHO ──
-    def _draw_header(self, c, entrega, y_start, via="", compacto=False):
+    # ── CABEÇALHO PRINCIPAL (com numeração de páginas) ──
+    def _draw_header(self, c, entrega, y_start, pagina=1, total_paginas=1, via="", compacto=False):
         x = self.margin
         y = y_start
         w_total = self.page_width - 2 * self.margin
@@ -285,6 +285,7 @@ class OrdemEntregaGenerator:
         c.setLineWidth(0.5)
         c.line(x + w_left, y, x + w_left, y - h)
 
+        # === COLUNA ESQUERDA: Título e numeração ===
         cx = x + w_left / 2
         cy = y - 5 * mm
         self._text_center(c, cx, cy, "ORDEM DE ENTREGA", size=12 if compacto else 14, bold=True)
@@ -297,19 +298,43 @@ class OrdemEntregaGenerator:
         data_emissao = datetime.now().strftime('%d/%m/%Y %H:%M')
         self._text_center(c, cx, cy, f"Emissao: {data_emissao}", size=7)
 
+        # === COLUNA DIREITA: Informações da empresa (organizadas) ===
         rx = x + w_left + 2 * mm
         ry = y - 4 * mm
+
+        # Nome da empresa em destaque
         self._text(c, rx, ry, self.loja_config.get('nome', 'FALL CONSTRUCOES'), size=9, bold=True)
         ry -= 3.5 * mm
-        self._text(c, rx, ry, f"CNPJ: {self.loja_config.get('cnpj', '')}", size=6)
-        ry -= 3 * mm
-        endereco = self._to_str(self.loja_config.get('endereco', ''))
-        if len(endereco) > 60:
-            endereco = endereco[:57] + "..."
-        self._text(c, rx, ry, endereco, size=6)
-        ry -= 3 * mm
-        self._text(c, rx, ry, f"Tel: {self._to_str(self.loja_config.get('telefone', ''))}", size=6)
 
+        # CNPJ
+        cnpj = self._to_str(self.loja_config.get('cnpj', ''))
+        if cnpj and cnpj != "---":
+            self._text(c, rx, ry, f"CNPJ: {cnpj}", size=6)
+            ry -= 3 * mm
+
+        # Endereço (quebra em 2 linhas se necessário)
+        endereco = self._to_str(self.loja_config.get('endereco', ''))
+        if endereco and endereco != "---":
+            if len(endereco) > 55:
+                self._text(c, rx, ry, endereco[:52] + "...", size=6)
+            else:
+                self._text(c, rx, ry, endereco, size=6)
+            ry -= 3 * mm
+
+        # Telefone
+        telefone = self._to_str(self.loja_config.get('telefone', ''))
+        if telefone and telefone != "---":
+            self._text(c, rx, ry, f"Tel: {telefone}", size=6)
+
+        # === NÚMERO DA PÁGINA (canto superior direito) ===
+        if total_paginas > 1:
+            c.setFont("Helvetica", 7)
+            c.setFillColorRGB(0.5, 0.5, 0.5)
+            c.drawRightString(x + w_total - 2 * mm, y - 4 * mm,
+                              f"Página {pagina} de {total_paginas}")
+            c.setFillColorRGB(0, 0, 0)
+
+        # === VIA (badge) ===
         if via:
             c.setFillColorRGB(0.9, 0.1, 0.1)
             c.setFont("Helvetica-Bold", 7)
@@ -318,8 +343,8 @@ class OrdemEntregaGenerator:
 
         return y - h
 
-    # ── CABEÇALHO DE CONTINUAÇÃO ──
-    def _draw_header_continuacao(self, c, entrega, pagina, y_start):
+    # ── CABEÇALHO DE CONTINUAÇÃO (com numeração) ──
+    def _draw_header_continuacao(self, c, entrega, pagina, total_paginas, y_start):
         x = self.margin
         y = y_start
         w_total = self.page_width - 2 * self.margin
@@ -337,13 +362,19 @@ class OrdemEntregaGenerator:
         c.drawCentredString(x + w_total / 2, y - 7 * mm, f"ORDEM DE ENTREGA — CONTINUAÇÃO")
         c.setFont("Helvetica", 8)
         c.drawCentredString(x + w_total / 2, y - 12 * mm,
-                            f"Nº ENT-{numero}  |  Página {pagina}  |  {self.loja_config.get('nome', 'FALL CONSTRUCOES')}")
+                            f"Nº ENT-{numero}  |  {self.loja_config.get('nome', 'FALL CONSTRUCOES')}")
+
+        # Número da página
+        c.setFont("Helvetica", 7)
+        c.setFillColorRGB(0.5, 0.5, 0.5)
+        c.drawRightString(x + w_total - 2 * mm, y - 4 * mm,
+                          f"Página {pagina} de {total_paginas}")
+        c.setFillColorRGB(0, 0, 0)
 
         return y - h
 
     # ── RESUMO DO DESTINATÁRIO (página 2+) ──
     def _draw_resumo_continuacao(self, c, entrega, y_start):
-        """Mini resumo do destinatário para páginas de continuação."""
         x = self.margin
         y = y_start
         w = self.page_width - 2 * self.margin
@@ -454,7 +485,7 @@ class OrdemEntregaGenerator:
 
         return y - h
 
-    # ── DETALHES DA ENTREGA (sem status) ──
+    # ── DETALHES DA ENTREGA (com valor total da compra) ──
     def _draw_detalhes_entrega(self, c, entrega, y_start):
         x = self.margin
         y = y_start
@@ -477,10 +508,10 @@ class OrdemEntregaGenerator:
         veiculo = self._to_str(entrega.get('tipo_veiculo')).upper()
         motorista = self._to_str(entrega.get('motorista'))
         placa = self._to_str(entrega.get('placa_veiculo'))
-        frete = self._to_float(entrega.get('valor_frete'))
+        valor_total = self._to_float(entrega.get('valor_total_venda'))
 
-        labels = ["DATA AGENDADA", "HORA", "VEICULO", "MOTORISTA", "PLACA", "VALOR FRETE"]
-        valores = [data_str, hora, veiculo, motorista, placa, f"R$ {frete:.2f}"]
+        labels = ["DATA AGENDADA", "HORA", "VEICULO", "MOTORISTA", "PLACA", "VALOR TOTAL"]
+        valores = [data_str, hora, veiculo, motorista, placa, f"R$ {valor_total:.2f}"]
 
         col_w = w / 6
         for i, (lab, val) in enumerate(zip(labels, valores)):
@@ -491,8 +522,8 @@ class OrdemEntregaGenerator:
 
         return y - h
 
-    # ── ITENS DA VENDA ──
-    def _draw_itens(self, c, itens, y_start, y_final=10*mm, mostrar_continua=False):
+    # ── ITENS DA VENDA (sem aviso de continuação) ──
+    def _draw_itens(self, c, itens, y_start, y_final=10*mm):
         x = self.margin
         y = y_start
         w = self.page_width - 2 * self.margin
@@ -567,12 +598,6 @@ class OrdemEntregaGenerator:
             c.setLineWidth(0.3)
             c.line(x, y - header_height - (idx + 1) * row_height, x + w, y - header_height - (idx + 1) * row_height)
 
-        if mostrar_continua:
-            c.setFont("Helvetica-Bold", 7)
-            c.setFillColorRGB(0.8, 0.1, 0.1)
-            c.drawString(x + 2 * mm, y - h + 3 * mm, "(continua na próxima página)")
-            c.setFillColorRGB(0, 0, 0)
-
         return y - h
 
     # ── OBSERVAÇÕES ──
@@ -620,7 +645,7 @@ class OrdemEntregaGenerator:
         c.setFillColorRGB(0, 0, 0)
         return y - h
 
-    def _draw_rodape_continuacao(self, c, y_start, pagina):
+    def _draw_rodape_continuacao(self, c, y_start, pagina, total_paginas):
         x = self.margin
         y = y_start
         w = self.page_width - 2 * self.margin
@@ -631,7 +656,7 @@ class OrdemEntregaGenerator:
         c.setFont("Helvetica", 6)
         c.setFillColorRGB(0.4, 0.4, 0.4)
         c.drawCentredString(x + w / 2, y - 4 * mm,
-            f"Documento sem valor fiscal — FALL Construções  |  Página {pagina}")
+            f"Documento sem valor fiscal — FALL Construções  |  Página {pagina} de {total_paginas}")
         c.setFillColorRGB(0, 0, 0)
         return y
 
