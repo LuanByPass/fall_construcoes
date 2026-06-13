@@ -1,4 +1,7 @@
-"""Tela de Entregas/Frete - FALL Construções (reestilizada proporcional)"""
+"""
+Tela de Entregas/Frete - FALL Construcoes
+VERSAO COM SCROLLBAR VERTICAL na aba "Nova Entrega"
+"""
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import datetime, timedelta
@@ -15,24 +18,18 @@ except Exception:
     class Logger:
         @classmethod
         def log(cls, msg, level="INFO"):
-            print(f"[{level}] {msg}")
+            print("[" + level + "] " + msg)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# IMPORT ABSOLUTO DO GERADOR DE PDF — FUNCIONA EM QUALQUER ESTRUTURA
-# ═══════════════════════════════════════════════════════════════════════
 def _carregar_gerador_pdf():
-    """Carrega OrdemEntregaGenerator diretamente do arquivo .py pelo caminho absoluto."""
     views_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(views_dir)
-
     candidatos = [
         os.path.join(project_root, "geradores", "ordem_entrega.py"),
         os.path.join(views_dir, "ordem_entrega.py"),
         os.path.join(views_dir, "geradores", "ordem_entrega.py"),
         os.path.join(os.path.dirname(project_root), "geradores", "ordem_entrega.py"),
     ]
-
     for caminho in candidatos:
         if os.path.exists(caminho):
             try:
@@ -43,11 +40,10 @@ def _carregar_gerador_pdf():
                 return mod.OrdemEntregaGenerator
             except Exception:
                 continue
-
     raise ImportError(
-        "Não foi possível encontrar 'ordem_entrega.py'.\n"
-        "Procurado em:\n" + "\n".join(f"  - {c}" for c in candidatos) + "\n\n"
-        "Crie a pasta 'geradores/' na raiz do projeto e coloque o arquivo lá."
+        "Nao foi possivel encontrar 'ordem_entrega.py'.\n"
+        "Procurado em:\n" + "\n".join("  - " + c for c in candidatos) + "\n\n"
+        "Crie a pasta 'geradores/' na raiz do projeto e coloque o arquivo la."
     )
 
 
@@ -63,58 +59,80 @@ class EntregaView(BaseView):
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
 
         self.tab_novo = tk.Frame(self.notebook, bg=ModernTheme.BG)
-        self.notebook.add(self.tab_novo, text="➕  Nova Entrega")
+        self.notebook.add(self.tab_novo, text="+  Nova Entrega")
 
         self.tab_lista = tk.Frame(self.notebook, bg=ModernTheme.BG)
-        self.notebook.add(self.tab_lista, text="📋  Entregas Agendadas")
+        self.notebook.add(self.tab_lista, text="  Entregas Agendadas")
 
         self._build_novo_tab()
         self._build_lista_tab()
-
-        # Atualiza vendas quando a aba "Nova Entrega" é selecionada
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
     def _on_tab_changed(self, event=None):
-        """Recarrega dados quando muda de aba."""
         try:
             aba_atual = self.notebook.index(self.notebook.select())
-            if aba_atual == 0:  # Nova Entrega
+            if aba_atual == 0:
                 self._recarregar_vendas()
-            elif aba_atual == 1:  # Entregas Agendadas
+            elif aba_atual == 1:
                 self._load_entregas()
         except Exception as e:
-            Logger.log(f"Erro ao trocar aba: {e}", "WARNING")
+            Logger.log("Erro ao trocar aba: " + str(e), "WARNING")
 
-    # ── Aba Nova Entrega ──────────────────────────────────────────────────────
     def _build_novo_tab(self):
-        main = tk.Frame(self.tab_novo, bg=ModernTheme.BG)
-        main.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+        container = tk.Frame(self.tab_novo, bg=ModernTheme.BG)
+        container.pack(fill=tk.BOTH, expand=True)
 
-        # CARD 1: Seleção da Venda
+        canvas_scroll = tk.Canvas(container, bg=ModernTheme.BG, highlightthickness=0)
+        canvas_scroll.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=canvas_scroll.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas_scroll.configure(yscrollcommand=scrollbar.set)
+
+        main = tk.Frame(canvas_scroll, bg=ModernTheme.BG)
+        canvas_scroll.create_window((0, 0), window=main, anchor=tk.NW)
+
+        def _on_frame_configure(event=None):
+            canvas_scroll.configure(scrollregion=canvas_scroll.bbox("all"))
+
+        main.bind("<Configure>", _on_frame_configure)
+
+        def _on_canvas_configure(event):
+            canvas_scroll.itemconfig(canvas_scroll.find_withtag("all")[0], width=event.width)
+
+        canvas_scroll.bind("<Configure>", _on_canvas_configure)
+
+        def _on_mousewheel(event):
+            canvas_scroll.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas_scroll.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas_scroll.bind_all("<Button-4>", lambda e: canvas_scroll.yview_scroll(-1, "units"))
+        canvas_scroll.bind_all("<Button-5>", lambda e: canvas_scroll.yview_scroll(1, "units"))
+
+        # CARD 1: Selecao da Venda
         card_venda = tk.Frame(main, bg=ModernTheme.CARD_BG,
                               highlightbackground=ModernTheme.SECONDARY,
                               highlightthickness=2)
-        card_venda.pack(fill=tk.X, pady=(0, 10))
+        card_venda.pack(fill=tk.X, pady=(0, 10), padx=12)
 
         header_venda = tk.Frame(card_venda, bg=ModernTheme.SECONDARY, height=36)
         header_venda.pack(fill=tk.X)
         header_venda.pack_propagate(False)
-        tk.Label(header_venda, text="🛒  SELECIONAR VENDA",
+        tk.Label(header_venda, text="  SELECIONAR VENDA",
                  font=("Segoe UI", 10, "bold"),
                  bg=ModernTheme.SECONDARY, fg="white").pack(side=tk.LEFT, padx=12, pady=8)
 
-        # Botão de atualizar no header
-        btn_atualizar_vendas = tk.Button(header_venda, text="🔄  Atualizar",
-                                         command=self._recarregar_vendas,
-                                         bg=ModernTheme.INFO, fg="white",
-                                         font=("Segoe UI", 8, "bold"),
-                                         bd=0, padx=10, pady=4, cursor="hand2",
-                                         activebackground="#1e40af")
+        btn_atualizar_vendas = tk.Button(
+            header_venda, text="  Atualizar",
+            command=self._recarregar_vendas,
+            bg=ModernTheme.INFO, fg="white",
+            font=("Segoe UI", 8, "bold"),
+            bd=0, padx=10, pady=4, cursor="hand2",
+            activebackground="#1e40af"
+        )
         btn_atualizar_vendas.pack(side=tk.RIGHT, padx=8, pady=6)
-        btn_atualizar_vendas.bind("<Enter>",
-            lambda e: btn_atualizar_vendas.config(bg="#1e40af"))
-        btn_atualizar_vendas.bind("<Leave>",
-            lambda e: btn_atualizar_vendas.config(bg=ModernTheme.INFO))
+        btn_atualizar_vendas.bind("<Enter>", lambda e: btn_atualizar_vendas.config(bg="#1e40af"))
+        btn_atualizar_vendas.bind("<Leave>", lambda e: btn_atualizar_vendas.config(bg=ModernTheme.INFO))
 
         body_venda = tk.Frame(card_venda, bg=ModernTheme.CARD_BG, padx=14, pady=12)
         body_venda.pack(fill=tk.X)
@@ -130,61 +148,67 @@ class EntregaView(BaseView):
         self.venda_combo = ttk.Combobox(
             body_venda, textvariable=self.venda_var,
             values=[],
-            state="readonly", font=("Segoe UI", 10), width=55)
+            state="readonly", font=("Segoe UI", 10), width=55
+        )
         self.venda_combo.pack(fill=tk.X, pady=(4, 8))
         self.venda_combo.bind("<<ComboboxSelected>>", self._on_venda_selecionada)
 
-        self.cliente_venda_label = tk.Label(body_venda,
-                 text="👤 Cliente: Nenhuma venda selecionada",
-                 font=("Segoe UI", 10, "bold"),
-                 bg=ModernTheme.CARD_BG, fg=ModernTheme.TEXT_MUTED)
+        self.cliente_venda_label = tk.Label(
+            body_venda,
+            text="  Cliente: Nenhuma venda selecionada",
+            font=("Segoe UI", 10, "bold"),
+            bg=ModernTheme.CARD_BG, fg=ModernTheme.TEXT_MUTED
+        )
         self.cliente_venda_label.pack(anchor=tk.W)
 
-        # Carrega vendas inicialmente
         self._recarregar_vendas()
 
         # CARD 2: Itens da Venda
         card_itens = tk.Frame(main, bg=ModernTheme.CARD_BG,
                               highlightbackground=ModernTheme.BORDER,
                               highlightthickness=1)
-        card_itens.pack(fill=tk.X, pady=(0, 10))
+        card_itens.pack(fill=tk.X, pady=(0, 10), padx=12)
 
         header_itens = tk.Frame(card_itens, bg=ModernTheme.SECONDARY, height=32)
         header_itens.pack(fill=tk.X)
-        tk.Label(header_itens, text="📦  ITENS DA VENDA",
+        tk.Label(header_itens, text="  ITENS DA VENDA",
                  font=("Segoe UI", 9, "bold"),
                  bg=ModernTheme.SECONDARY, fg="white").pack(side=tk.LEFT, padx=12, pady=6)
 
         body_itens = tk.Frame(card_itens, bg=ModernTheme.CARD_BG, padx=12, pady=8)
         body_itens.pack(fill=tk.X)
 
-        cols_itens = ("Código", "Produto", "Qtd", "Preço Unit.", "Subtotal")
-        self.itens_venda_tree = ttk.Treeview(body_itens, columns=cols_itens,
-                                               show="headings", height=5)
+        cols_itens = ("Codigo", "Produto", "Qtd", "Preco Unit.", "Subtotal")
+        self.itens_venda_tree = ttk.Treeview(
+            body_itens, columns=cols_itens,
+            show="headings", height=5
+        )
         for col, w in zip(cols_itens, [90, 280, 50, 90, 90]):
             self.itens_venda_tree.heading(col, text=col)
-            self.itens_venda_tree.column(col, width=w,
-                anchor=tk.CENTER if col in ("Qtd", "Preço Unit.", "Subtotal") else tk.W)
+            self.itens_venda_tree.column(
+                col, width=w,
+                anchor=tk.CENTER if col in ("Qtd", "Preco Unit.", "Subtotal") else tk.W
+            )
         self.itens_venda_tree.pack(fill=tk.X)
         self.itens_venda_tree.tag_configure("even", background="#f8fafc")
         self.itens_venda_tree.tag_configure("odd", background="white")
 
-        # CARD 3: Endereço de Entrega
+        # CARD 3: Endereco de Entrega
         card_endereco = tk.Frame(main, bg=ModernTheme.CARD_BG,
                                  highlightbackground=ModernTheme.BORDER,
                                  highlightthickness=1)
-        card_endereco.pack(fill=tk.X, pady=(0, 10))
+        card_endereco.pack(fill=tk.X, pady=(0, 10), padx=12)
 
         header_end = tk.Frame(card_endereco, bg=ModernTheme.SECONDARY, height=32)
         header_end.pack(fill=tk.X)
-        tk.Label(header_end, text="📍  ENDEREÇO DE ENTREGA",
+        tk.Label(header_end, text="  ENDERECO DE ENTREGA",
                  font=("Segoe UI", 9, "bold"),
                  bg=ModernTheme.SECONDARY, fg="white").pack(side=tk.LEFT, padx=12, pady=6)
 
         body_end = tk.Frame(card_endereco, bg=ModernTheme.CARD_BG, padx=14, pady=12)
         body_end.pack(fill=tk.X)
 
-        tk.Label(body_end, text="Logradouro / Endereço Completo",
+        tk.Label(body_end, text="Logradouro / Endereco Completo",
                  font=("Segoe UI", 9, "bold"),
                  bg=ModernTheme.CARD_BG, fg=ModernTheme.TEXT_MUTED).pack(anchor=tk.W)
         self.endereco_entry = self.styled_entry(body_end, width=60)
@@ -221,11 +245,11 @@ class EntregaView(BaseView):
         card_detalhes = tk.Frame(main, bg=ModernTheme.CARD_BG,
                                  highlightbackground=ModernTheme.BORDER,
                                  highlightthickness=1)
-        card_detalhes.pack(fill=tk.X, pady=(0, 10))
+        card_detalhes.pack(fill=tk.X, pady=(0, 10), padx=12)
 
         header_det = tk.Frame(card_detalhes, bg=ModernTheme.SECONDARY, height=32)
         header_det.pack(fill=tk.X)
-        tk.Label(header_det, text="🚚  DETALHES DA ENTREGA",
+        tk.Label(header_det, text="  DETALHES DA ENTREGA",
                  font=("Segoe UI", 9, "bold"),
                  bg=ModernTheme.SECONDARY, fg="white").pack(side=tk.LEFT, padx=12, pady=6)
 
@@ -255,12 +279,12 @@ class EntregaView(BaseView):
 
         col_veic = tk.Frame(row1, bg=ModernTheme.CARD_BG)
         col_veic.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(col_veic, text="Veículo",
+        tk.Label(col_veic, text="Veiculo",
                  font=("Segoe UI", 9, "bold"),
                  bg=ModernTheme.CARD_BG, fg=ModernTheme.TEXT_MUTED).pack(anchor=tk.W)
         self.veiculo_var = tk.StringVar(value="Caminhonete")
         ttk.Combobox(col_veic, textvariable=self.veiculo_var,
-                     values=["Moto", "Carro", "Caminhonete", "Caminhão", "Carreta"],
+                     values=["Moto", "Carro", "Caminhonete", "Caminhao", "Carreta"],
                      state="readonly", width=14,
                      font=("Segoe UI", 9)).pack(fill=tk.X, pady=(4, 0))
 
@@ -277,7 +301,7 @@ class EntregaView(BaseView):
 
         col_placa = tk.Frame(row2, bg=ModernTheme.CARD_BG)
         col_placa.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Label(col_placa, text="Placa do Veículo",
+        tk.Label(col_placa, text="Placa do Veiculo",
                  font=("Segoe UI", 9, "bold"),
                  bg=ModernTheme.CARD_BG, fg=ModernTheme.TEXT_MUTED).pack(anchor=tk.W)
         self.placa_entry = self.styled_entry(col_placa, width=12)
@@ -295,85 +319,85 @@ class EntregaView(BaseView):
         self.frete_entry.insert(0, "0.00")
         self.frete_entry.pack(pady=(4, 0))
 
-        # CARD 5: Observações + Botão
+        # CARD 5: Observacoes + Botao
         card_obs = tk.Frame(main, bg=ModernTheme.CARD_BG,
                             highlightbackground=ModernTheme.BORDER,
                             highlightthickness=1)
-        card_obs.pack(fill=tk.X, pady=(0, 10))
+        card_obs.pack(fill=tk.X, pady=(0, 10), padx=12)
 
         body_obs = tk.Frame(card_obs, bg=ModernTheme.CARD_BG, padx=14, pady=10)
         body_obs.pack(fill=tk.X)
 
-        tk.Label(body_obs, text="📝  Observações",
+        tk.Label(body_obs, text="  Observacoes",
                  font=("Segoe UI", 9, "bold"),
                  bg=ModernTheme.CARD_BG, fg=ModernTheme.TEXT_MUTED).pack(anchor=tk.W)
         self.obs_entry = self.styled_entry(body_obs, width=60)
         self.obs_entry.pack(fill=tk.X, pady=(4, 0))
 
-        btn_agendar = tk.Button(main, text="🚚  AGENDAR ENTREGA",
-                            command=self._agendar,
-                            bg=ModernTheme.SUCCESS, fg="white",
-                            font=("Segoe UI", 12, "bold"),
-                            bd=0, relief=tk.FLAT, pady=12, cursor="hand2",
-                            activebackground="#15803d",
-                            activeforeground="white")
-        btn_agendar.pack(fill=tk.X, pady=(4, 0))
+        # BOTAO AGENDAR
+        btn_agendar = tk.Button(
+            main, text="  AGENDAR ENTREGA",
+            command=self._agendar,
+            bg=ModernTheme.SUCCESS, fg="white",
+            font=("Segoe UI", 12, "bold"),
+            bd=0, relief=tk.FLAT, pady=12, cursor="hand2",
+            activebackground="#15803d",
+            activeforeground="white"
+        )
+        btn_agendar.pack(fill=tk.X, pady=(4, 12), padx=12)
         btn_agendar.bind("<Enter>", lambda e: btn_agendar.config(bg="#15803d"))
         btn_agendar.bind("<Leave>", lambda e: btn_agendar.config(bg=ModernTheme.PRIMARY_HOVER))
 
-    # ── Recarregar vendas dinamicamente ──────────────────────────────────────
     def _recarregar_vendas(self):
-        """Busca vendas finalizadas do banco e atualiza o combobox."""
         try:
             self._vendas_lista = self.controllers["venda"].listar_vendas(status="pago") or []
             vendas = self._vendas_lista
 
-            # Atualiza valores do combobox
-            valores = [
-                f"{v['numero_venda']} | {v.get('cliente_nome', 'Avulso')} | R$ {float(v.get('total', 0)):.2f}"
-                for v in vendas
-            ]
-            self.venda_combo['values'] = valores
+            valores = []
+            for v in vendas:
+                numero = v.get("numero_venda", "")
+                cliente = v.get("cliente_nome", "Avulso")
+                total = float(v.get("total", 0))
+                valores.append(str(numero) + " | " + str(cliente) + " | R$ " + "{:.2f}".format(total))
 
-            # Reconstrói o dicionário de busca
+            self.venda_combo["values"] = valores
+
             self._vendas_dict = {}
             for idx, v in enumerate(vendas):
-                key = str(v['numero_venda'])
+                key = str(v.get("numero_venda", ""))
                 self._vendas_dict[key] = v
-                self._vendas_dict[f"idx_{idx}"] = v
+                self._vendas_dict["idx_" + str(idx)] = v
 
-            # Se não houver vendas, mostra mensagem no label
             if not vendas:
                 self.cliente_venda_label.config(
-                    text="👤 Nenhuma venda finalizada disponível",
+                    text="  Nenhuma venda finalizada disponivel",
                     fg=ModernTheme.DANGER
                 )
             else:
                 self.cliente_venda_label.config(
-                    text="👤 Cliente: Nenhuma venda selecionada",
+                    text="  Cliente: Nenhuma venda selecionada",
                     fg=ModernTheme.TEXT_MUTED
                 )
 
-            Logger.log(f"Vendas recarregadas: {len(vendas)} vendas finalizadas", "INFO")
+            Logger.log("Vendas recarregadas: " + str(len(vendas)) + " vendas finalizadas", "INFO")
 
         except Exception as e:
-            Logger.log(f"Erro ao recarregar vendas: {e}", "ERROR")
+            Logger.log("Erro ao recarregar vendas: " + str(e), "ERROR")
             self.cliente_venda_label.config(
-                text=f"👤 Erro ao carregar vendas: {e}",
+                text="  Erro ao carregar vendas: " + str(e),
                 fg=ModernTheme.DANGER
             )
 
-    # ── Aba Entregas Agendadas ───────────────────────────────────────────────
     def _build_lista_tab(self):
         stats_frame = tk.Frame(self.tab_lista, bg=ModernTheme.BG)
         stats_frame.pack(fill=tk.X, padx=12, pady=(0, 8))
 
         self.stats_labels = {}
         stats_config = [
-            ("total",     "📋 Total",       ModernTheme.PRIMARY,  "#1e40af"),
-            ("agendada",  "📅 Agendadas",   ModernTheme.INFO,     "#1e40af"),
-            ("transito",  "🚛 Em Trânsito", ModernTheme.WARNING,  "#b45309"),
-            ("entregue",  "✅ Entregues",    ModernTheme.SUCCESS,  "#15803d"),
+            ("total",     "  Total",       ModernTheme.PRIMARY,  "#1e40af"),
+            ("agendada",  "  Agendadas",   ModernTheme.INFO,     "#1e40af"),
+            ("transito",  "  Em Transito", ModernTheme.WARNING,  "#b45309"),
+            ("entregue",  "  Entregues",    ModernTheme.SUCCESS,  "#15803d"),
         ]
         for key, label, color, hover in stats_config:
             card = tk.Frame(stats_frame, bg=ModernTheme.CARD_BG,
@@ -409,9 +433,9 @@ class EntregaView(BaseView):
         self.status_entrega_var = tk.StringVar(value="todos")
         for val, label, color in [
             ("todos",       "Todas",       ModernTheme.TEXT),
-            ("agendada",    "📅 Agendadas", ModernTheme.INFO),
-            ("em_transito", "🚛 Trânsito",  ModernTheme.WARNING),
-            ("entregue",    "✅ Entregues", ModernTheme.SUCCESS),
+            ("agendada",    "  Agendadas", ModernTheme.INFO),
+            ("em_transito", "  Transito",  ModernTheme.WARNING),
+            ("entregue",    "  Entregues", ModernTheme.SUCCESS),
         ]:
             rb = tk.Radiobutton(inner, text=label,
                                 variable=self.status_entrega_var, value=val,
@@ -422,7 +446,7 @@ class EntregaView(BaseView):
                                 command=self._load_entregas)
             rb.pack(side=tk.LEFT, padx=6)
 
-        btn_atualizar = tk.Button(inner, text="🔄  Atualizar", command=self._load_entregas,
+        btn_atualizar = tk.Button(inner, text="  Atualizar", command=self._load_entregas,
                                   bg=ModernTheme.INFO, fg="white",
                                   font=("Segoe UI", 9, "bold"),
                                   bd=0, padx=16, pady=6, cursor="hand2",
@@ -438,7 +462,7 @@ class EntregaView(BaseView):
 
         table_header = tk.Frame(table_card, bg=ModernTheme.PRIMARY, height=36)
         table_header.pack(fill=tk.X)
-        tk.Label(table_header, text="📋  ENTREGAS AGENDADAS",
+        tk.Label(table_header, text="  ENTREGAS AGENDADAS",
                  font=("Segoe UI", 10, "bold"),
                  bg=ModernTheme.PRIMARY, fg="white").pack(
             side=tk.LEFT, padx=14, pady=6)
@@ -451,7 +475,7 @@ class EntregaView(BaseView):
         table_body = tk.Frame(table_card, bg=ModernTheme.CARD_BG)
         table_body.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        columns = ("ID", "Cliente", "Endereço", "Data", "Veículo", "Frete", "Status")
+        columns = ("ID", "Cliente", "Endereco", "Data", "Veiculo", "Frete", "Status")
         self.entregas_tree = ttk.Treeview(table_body, columns=columns,
                                           show="headings", height=14)
         for col, w in zip(columns, [50, 150, 220, 100, 90, 80, 100]):
@@ -479,15 +503,15 @@ class EntregaView(BaseView):
         action_inner = tk.Frame(action_card, bg=ModernTheme.CARD_BG, padx=12, pady=10)
         action_inner.pack(fill=tk.X)
 
-        tk.Label(action_inner, text="AÇÃO DA ENTREGA SELECIONADA",
+        tk.Label(action_inner, text="ACAO DA ENTREGA SELECIONADA",
                  font=("Segoe UI", 9, "bold"),
                  bg=ModernTheme.CARD_BG, fg=ModernTheme.TEXT_MUTED).pack(
             side=tk.LEFT, padx=12)
 
         for label, st, color, hover in [
-            ("🚛  Em Trânsito", "em_transito", ModernTheme.WARNING, "#b45309"),
-            ("✅  Entregue",    "entregue",    ModernTheme.SUCCESS, "#15803d"),
-            ("❌  Cancelar",    "cancelada",   ModernTheme.DANGER,  "#b91c1c"),
+            ("  Em Transito", "em_transito", ModernTheme.WARNING, "#b45309"),
+            ("  Entregue",    "entregue",    ModernTheme.SUCCESS, "#15803d"),
+            ("  Cancelar",    "cancelada",   ModernTheme.DANGER,  "#b91c1c"),
         ]:
             btn = tk.Button(action_inner, text=label,
                             command=lambda s=st: self._mudar_status(s),
@@ -499,13 +523,13 @@ class EntregaView(BaseView):
             btn.bind("<Enter>", lambda e, c=hover: btn.config(bg=c))
             btn.bind("<Leave>", lambda e, c=color: btn.config(bg=c))
 
-        tk.Button(action_inner, text="🖨️  Imprimir", command=self._imprimir_ordem,
+        tk.Button(action_inner, text="  Imprimir", command=self._imprimir_ordem,
                   bg=ModernTheme.INFO, fg="white",
                   font=("Segoe UI", 9, "bold"),
                   bd=0, padx=12, pady=6, cursor="hand2",
                   activebackground="#1e40af").pack(side=tk.LEFT, padx=3)
 
-        tk.Button(action_inner, text="🖨️  Reimprimir", command=self._reimprimir_ordem,
+        tk.Button(action_inner, text="  Reimprimir", command=self._reimprimir_ordem,
                   bg=ModernTheme.SECONDARY, fg="white",
                   font=("Segoe UI", 9, "bold"),
                   bd=0, padx=12, pady=6, cursor="hand2",
@@ -513,7 +537,6 @@ class EntregaView(BaseView):
 
         self._load_entregas()
 
-    # ─────────────────────────────────────────────────────────────────────────
     def _on_venda_selecionada(self, event=None):
         venda_str = self.venda_var.get()
         if not venda_str:
@@ -548,11 +571,10 @@ class EntregaView(BaseView):
                 cliente = self._buscar_cliente_fallback(venda_completa)
 
             if cliente:
-                nome_cliente = cliente.get("nome", "Não informado")
-                self.cliente_venda_label.config(text=f"👤 Cliente: {nome_cliente}")
+                nome_cliente = cliente.get("nome", "Nao informado")
+                self.cliente_venda_label.config(text="  Cliente: " + nome_cliente)
 
-                endereco = (cliente.get("endereco", "") or 
-                           cliente.get("logradouro", "") or "")
+                endereco = cliente.get("endereco", "") or cliente.get("logradouro", "")
                 self.endereco_entry.delete(0, tk.END)
                 self.endereco_entry.insert(0, endereco)
 
@@ -565,7 +587,7 @@ class EntregaView(BaseView):
                 self.cep_entry.delete(0, tk.END)
                 self.cep_entry.insert(0, cliente.get("cep", ""))
             else:
-                self.cliente_venda_label.config(text="👤 Cliente: Consumidor Final (Avulso)")
+                self.cliente_venda_label.config(text="  Cliente: Consumidor Final (Avulso)")
                 self.endereco_entry.delete(0, tk.END)
                 self.cidade_entry.delete(0, tk.END)
                 self.estado_entry.delete(0, tk.END)
@@ -577,16 +599,21 @@ class EntregaView(BaseView):
             itens = venda_completa.get("itens", [])
             for idx, item in enumerate(itens):
                 tag = "even" if idx % 2 == 0 else "odd"
+                codigo = item.get("codigo", "---")
+                nome = item.get("produto_nome", item.get("nome", "Item"))[:30]
+                qtd = item.get("quantidade", 1)
+                preco = float(item.get("preco_unitario", 0))
+                subtotal = float(item.get("subtotal", 0))
                 self.itens_venda_tree.insert("", tk.END, tags=(tag,), values=(
-                    item.get("codigo", "---"),
-                    item.get("produto_nome", item.get("nome", "Item"))[:30],
-                    item.get("quantidade", 1),
-                    f"R$ {float(item.get('preco_unitario', 0)):.2f}",
-                    f"R$ {float(item.get('subtotal', 0)):.2f}",
+                    codigo,
+                    nome,
+                    qtd,
+                    "R$ " + "{:.2f}".format(preco),
+                    "R$ " + "{:.2f}".format(subtotal),
                 ))
 
         except Exception as e:
-            Logger.log(f"Erro ao carregar venda: {e}", "ERROR")
+            Logger.log("Erro ao carregar venda: " + str(e), "ERROR")
 
     def _buscar_cliente_fallback(self, venda_completa):
         cliente_id = venda_completa.get("cliente_id")
@@ -639,12 +666,12 @@ class EntregaView(BaseView):
                         break
 
             if not venda:
-                self.show_message("Erro", "Venda não encontrada", "error")
+                self.show_message("Erro", "Venda nao encontrada", "error")
                 return
             venda_id = venda["id"]
             cliente_id = venda.get("cliente_id")
         except Exception as e:
-            self.show_message("Erro", f"Erro ao processar venda: {e}", "error")
+            self.show_message("Erro", "Erro ao processar venda: " + str(e), "error")
             return
 
         dados = {
@@ -667,12 +694,11 @@ class EntregaView(BaseView):
             self.show_message("Sucesso", msg)
             self._load_entregas()
             self.notebook.select(self.tab_lista)
-            # Limpa a seleção para forçar recarregamento na próxima vez
             self.venda_var.set("")
             for item in self.itens_venda_tree.get_children():
                 self.itens_venda_tree.delete(item)
             self.cliente_venda_label.config(
-                text="👤 Cliente: Nenhuma venda selecionada",
+                text="  Cliente: Nenhuma venda selecionada",
                 fg=ModernTheme.TEXT_MUTED
             )
         else:
@@ -686,13 +712,6 @@ class EntregaView(BaseView):
         if status == "todos":
             status = None
 
-        _icons = {
-            "agendada":    "📅",
-            "em_transito": "🚛",
-            "entregue":    "✅",
-            "cancelada":   "❌",
-        }
-
         contagem = {"total": 0, "agendada": 0, "em_transito": 0, "entregue": 0}
 
         entregas = self.controllers["entrega"].listar(status) or []
@@ -701,7 +720,6 @@ class EntregaView(BaseView):
             contagem[st] = contagem.get(st, 0) + 1
             contagem["total"] += 1
 
-            icon = _icons.get(st, "•")
             data = ""
             if e.get("data_agendada"):
                 try:
@@ -710,6 +728,7 @@ class EntregaView(BaseView):
                     data = str(e["data_agendada"])[:10]
 
             tag = (st, "even" if idx % 2 == 0 else "odd")
+            valor_frete = float(e.get("valor_frete", 0) or 0)
 
             self.entregas_tree.insert("", tk.END, tags=tag, values=(
                 e["id"],
@@ -717,13 +736,13 @@ class EntregaView(BaseView):
                 str(e.get("endereco_entrega", ""))[:32],
                 data,
                 e.get("tipo_veiculo", ""),
-                f"R$ {float(e.get('valor_frete', 0) or 0):.2f}",
-                f"{icon} {st}",
+                "R$ " + "{:.2f}".format(valor_frete),
+                st,
             ))
 
         for key in self.stats_labels:
             self.stats_labels[key].config(text=str(contagem.get(key, 0)))
-        self.contador_label.config(text=f"{contagem['total']} entregas")
+        self.contador_label.config(text=str(contagem["total"]) + " entregas")
 
     def _get_selected(self):
         sel = self.entregas_tree.selection()
@@ -741,17 +760,13 @@ class EntregaView(BaseView):
             else:
                 self.show_message("Erro", msg, "error")
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # IMPRESSÃO PDF DANFE — VIA DUPLA
-    # ═══════════════════════════════════════════════════════════════════════
-
     def _imprimir_ordem(self):
         eid = self._get_selected()
         if not eid:
             return
         entrega = self.controllers["entrega"].obter(eid)
         if not entrega:
-            self.show_message("Erro", "Entrega não encontrada", "error")
+            self.show_message("Erro", "Entrega nao encontrada", "error")
             return
         self._gerar_pdf_entrega(entrega, titulo="ORDEM DE ENTREGA")
 
@@ -761,46 +776,33 @@ class EntregaView(BaseView):
             return
         entrega = self.controllers["entrega"].obter(eid)
         if not entrega:
-            self.show_message("Erro", "Entrega não encontrada", "error")
+            self.show_message("Erro", "Entrega nao encontrada", "error")
             return
-        self._gerar_pdf_entrega(entrega, titulo="REIMPRESSÃO — ORDEM DE ENTREGA")
+        self._gerar_pdf_entrega(entrega, titulo="REIMPRESSAO - ORDEM DE ENTREGA")
 
     def _gerar_pdf_entrega(self, entrega, titulo="ORDEM DE ENTREGA"):
-        """Gera PDF profissional com via dupla e abre automaticamente."""
         try:
             OrdemEntregaGenerator = _carregar_gerador_pdf()
         except ImportError as e:
             messagebox.showerror(
-                "Erro de Importação",
-                f"Não foi possível carregar o gerador de PDF:\n\n{str(e)}"
+                "Erro de Importacao",
+                "Nao foi possivel carregar o gerador de PDF:\n\n" + str(e)
             )
             return
 
-        # Busca venda completa para ter os itens
         venda = None
         try:
             venda_id = entrega.get("venda_id")
             if venda_id and "venda" in self.controllers:
                 venda = self.controllers["venda"].obter_venda(venda_id)
         except Exception as e:
-            Logger.log(f"Erro ao buscar venda para PDF: {e}", "WARNING")
+            Logger.log("Erro ao buscar venda para PDF: " + str(e), "WARNING")
 
-        # Enriquece o dict entrega com dados do cliente de forma robusta
         if venda:
             if not entrega.get("cliente_nome"):
-                entrega["cliente_nome"] = (
-                    venda.get("cliente_nome") or
-                    venda.get("cliente") or
-                    "Não informado"
-                )
+                entrega["cliente_nome"] = venda.get("cliente_nome") or venda.get("cliente") or "Nao informado"
             if not entrega.get("telefone_contato"):
-                entrega["telefone_contato"] = (
-                    venda.get("cliente_telefone") or
-                    venda.get("telefone") or
-                    venda.get("fone") or
-                    ""
-                )
-            # Busca CPF/CNPJ testando vários nomes de campo possíveis
+                entrega["telefone_contato"] = venda.get("cliente_telefone") or venda.get("telefone") or venda.get("fone") or ""
             if not entrega.get("cpf_cnpj"):
                 for campo in ["cliente_cpf_cnpj", "cpf_cnpj", "cpf", "cnpj", "documento"]:
                     val = venda.get(campo)
@@ -808,32 +810,30 @@ class EntregaView(BaseView):
                         entrega["cpf_cnpj"] = val
                         break
 
-        # Garante que motorista e placa estejam presentes
         if not entrega.get("motorista"):
             entrega["motorista"] = ""
         if not entrega.get("placa_veiculo"):
             entrega["placa_veiculo"] = ""
 
-        # Gera PDF
         try:
             gerador = OrdemEntregaGenerator(LOJA_CONFIG)
             caminho_pdf = gerador.gerar(entrega, venda=venda)
 
             resposta = messagebox.askyesno(
                 "PDF Gerado",
-                f"Ordem de entrega gerada com sucesso!\n\n"
-                f"Arquivo: {caminho_pdf}\n\n"
-                f"Deseja abrir o PDF agora?",
+                "Ordem de entrega gerada com sucesso!\n\n"
+                "Arquivo: " + caminho_pdf + "\n\n"
+                "Deseja abrir o PDF agora?",
                 icon="info"
             )
             if resposta:
                 gerador.abrir_pdf(caminho_pdf)
 
         except Exception as e:
-            Logger.log(f"Erro ao gerar PDF: {e}", "ERROR")
+            Logger.log("Erro ao gerar PDF: " + str(e), "ERROR")
             messagebox.showerror(
                 "Erro ao Gerar PDF",
-                f"Não foi possível gerar o PDF:\n\n{str(e)}\n\n"
-                f"Verifique se a biblioteca 'reportlab' está instalada:\n"
-                f"pip install reportlab"
+                "Nao foi possivel gerar o PDF:\n\n" + str(e) + "\n\n"
+                "Verifique se a biblioteca 'reportlab' esta instalada:\n"
+                "pip install reportlab"
             )

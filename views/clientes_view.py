@@ -1,5 +1,6 @@
 """Tela de Clientes - FALL Construções
 ATUALIZADO: CRUD completo + busca local + estatísticas sincronizadas + detecção automática de campos
++ CORREÇÃO: Scroll touchpad + Número/Data da venda + BUG sorted(venda.keys())
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -26,7 +27,6 @@ class ClientesView(BaseView):
 
     def build(self):
         self.frame = tk.Frame(self.parent, bg=ModernTheme.BG)
-
 
         self.notebook = ttk.Notebook(self.frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
@@ -159,34 +159,42 @@ class ClientesView(BaseView):
 
     def _extrair_numero_venda(self, venda):
         """Tenta extrair o número da venda de qualquer campo disponível"""
-        campos_prioridade = ['numero_venda', 'numero', 'id', 'venda_id', 'pedido', 
-                            'pedido_numero', 'codigo', 'nota', 'nota_fiscal', 'seq']
+        campos_prioridade = [
+            'numero_venda', 'numero', 'id', 'venda_id', 'pedido', 
+            'pedido_numero', 'codigo', 'nota', 'nota_fiscal', 'seq',
+            'numero_nota', 'numero_pedido', 'num_venda', 'n_venda',
+            'venda_numero', 'pedido_id', 'ordem', 'ordem_id'
+        ]
         for campo in campos_prioridade:
             val = venda.get(campo)
-            if val is not None and str(val).strip() not in ('', 'None', 'null'):
+            if val is not None and str(val).strip() not in ('', 'None', 'null', '0'):
                 return str(val)
-        
-        # Fallback: procura qualquer chave que contenha 'num' ou 'id' ou 'cod'
-        for k, v in venda.items():
+
+        # CORREÇÃO: Usar venda.items() em vez de venda.keys()
+        for k, v in sorted(venda.items()):
             k_lower = str(k).lower()
-            if any(x in k_lower for x in ['num', 'nro', 'id', 'cod', 'seq', 'ped']):
-                if v is not None and str(v).strip() not in ('', 'None', 'null'):
+            if any(x in k_lower for x in ['num', 'nro', 'cod', 'seq', 'ped', 'nota', 'ordem']):
+                if v is not None and str(v).strip() not in ('', 'None', 'null', '0'):
                     return str(v)
         return 'N/A'
 
     def _extrair_data_venda(self, venda):
         """Tenta extrair a data da venda de qualquer campo disponível"""
-        campos_data = ['data_hora', 'data_venda', 'created_at', 'data', 'datetime', 
-                      'dt', 'data_criacao', 'timestamp', 'data_emissao', 'dt_venda']
+        campos_data = [
+            'data_hora', 'data_venda', 'created_at', 'data', 'datetime', 
+            'dt', 'data_criacao', 'timestamp', 'data_emissao', 'dt_venda',
+            'data_pedido', 'dt_pedido', 'data_compra', 'dt_compra',
+            'venda_data', 'pedido_data', 'data_finalizacao', 'dt_finalizacao'
+        ]
         for campo in campos_data:
             val = venda.get(campo)
             if val is not None and str(val).strip() not in ('', 'None', 'null'):
                 return val
-        
-        # Fallback: procura qualquer chave que contenha 'data' ou 'date' ou 'time'
-        for k, v in venda.items():
+
+        # CORREÇÃO: Usar venda.items() em vez de venda.keys()
+        for k, v in sorted(venda.items()):
             k_lower = str(k).lower()
-            if any(x in k_lower for x in ['data', 'date', 'time', 'dt', 'hora']):
+            if any(x in k_lower for x in ['data', 'date', 'time', 'dt', 'hora', 'criado', 'created']):
                 if v is not None and str(v).strip() not in ('', 'None', 'null'):
                     return v
         return None
@@ -217,14 +225,14 @@ class ClientesView(BaseView):
                 return datetime.strptime(s[:len(fmt)+10], fmt)
             except ValueError:
                 continue
-        
+
         # Tenta ISO format
         try:
             return datetime.fromisoformat(s.replace('Z', '+00:00').replace('T', ' '))
         except Exception:
             pass
-        
-        # Tenta detectar data em string genérica (ex: "2026-06-11 13:07:00")
+
+        # Tenta detectar data em string genérica
         import re
         match = re.search(r'(\d{4}-\d{2}-\d{2})', s)
         if match:
@@ -232,7 +240,7 @@ class ClientesView(BaseView):
                 return datetime.strptime(match.group(1), '%Y-%m-%d')
             except ValueError:
                 pass
-        
+
         return None
 
     def _calcular_estatisticas_reais(self, compras):
@@ -279,12 +287,42 @@ class ClientesView(BaseView):
         for widget in self.detalhes_frame.winfo_children():
             widget.destroy()
 
+        # CORREÇÃO: Canvas com scroll universal (mouse + touchpad)
         canvas = tk.Canvas(self.detalhes_frame, bg=ModernTheme.BG)
         scrollbar = ttk.Scrollbar(self.detalhes_frame, orient="vertical", command=canvas.yview)
         scroll_frame = tk.Frame(canvas, bg=ModernTheme.BG)
+
         scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=scroll_frame, anchor="nw", width=750)
         canvas.configure(yscrollcommand=scrollbar.set)
+
+        # CORREÇÃO: Bindings para scroll com mouse wheel e touchpad
+        def _on_mousewheel(event):
+            """Handler universal para scroll com mouse e touchpad"""
+            if event.delta:
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            elif event.num == 4:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                canvas.yview_scroll(1, "units")
+
+        # Bindings para Windows (mouse wheel + touchpad)
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        # Bindings para Linux (scroll wheel)
+        canvas.bind_all("<Button-4>", _on_mousewheel)
+        canvas.bind_all("<Button-5>", _on_mousewheel)
+        # Bindings para Linux touchpad (scroll horizontal convertido para vertical)
+        canvas.bind_all("<Shift-MouseWheel>", _on_mousewheel)
+
+        # Cleanup bindings quando a aba muda
+        def _cleanup_bindings(event=None):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+            canvas.unbind_all("<Shift-MouseWheel>")
+
+        self.notebook.bind("<<NotebookTabChanged>>", lambda e: _cleanup_bindings() if self.notebook.index(self.notebook.select()) != 1 else None)
+
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
@@ -502,7 +540,7 @@ class ClientesView(BaseView):
 
         confirm = messagebox.askyesno(
             "⚠️ Confirmar Exclusão",
-            f"Deseja excluir o cliente '{cliente.get('nome')}'?\n\n"
+            f"Deseja excluir o cliente '{cliente.get('nome')}'?"
             "⚠️ Isso também removerá todas as vendas e orçamentos vinculados!",
             icon='warning'
         )

@@ -1,10 +1,354 @@
-"""Histórico de Vendas - FALL Construcoes (reestilizado + botoes proporcionais)"""
+"""Histórico de Vendas - FALL Construcoes (PDF + Status)"""
 import tkinter as tk
 from tkinter import ttk, messagebox
 import subprocess, os, platform
 from datetime import datetime
 from views.base_view import BaseView
 from config import ModernTheme, LOJA_CONFIG
+
+# ═══════════════════════════════════════════════════════════════════
+# GERADOR DE PDF - Recibo/Comprovante com Status Badge
+# ═══════════════════════════════════════════════════════════════════
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
+
+
+class ReciboPDFGenerator:
+    """Gera PDF de Recibo/Comprovante de Venda/Orçamento com Status"""
+
+    def __init__(self, loja_config):
+        self.loja_config = loja_config
+        self.page_width, self.page_height = A4
+        self.margin = 10 * mm
+
+    def _safe_str(self, value, default=""):
+        if value is None:
+            return default
+        result = str(value).strip()
+        return result if result else default
+
+    def _safe_float(self, value, default=0.0):
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _get_val(self, venda, *keys, default=""):
+        for key in keys:
+            val = venda.get(key) if isinstance(venda, dict) else getattr(venda, key, None)
+            if val is not None and str(val).strip():
+                return val
+        return default
+
+    def gerar(self, venda, output_path="recibo.pdf", tipo_documento="VENDA"):
+        """Gera o PDF do recibo/comprovante"""
+        try:
+            if isinstance(venda, dict):
+                venda = dict(venda)
+                if 'tipo_documento' not in venda:
+                    venda['tipo_documento'] = tipo_documento
+
+            c = canvas.Canvas(output_path, pagesize=A4)
+            numero_doc = self._safe_str(self._get_val(venda, 'numero', 'numero_venda'), '000')
+            c.setTitle(f"Recibo - {numero_doc}")
+
+            y = self.page_height - self.margin
+
+            y = self._draw_header(c, venda, y)
+            y -= 3 * mm
+
+            y = self._draw_emitente(c, y)
+            y -= 3 * mm
+
+            y = self._draw_destinatario(c, venda, y)
+            y -= 3 * mm
+
+            y = self._draw_resumo(c, venda, y)
+            y -= 3 * mm
+
+            y = self._draw_produtos(c, venda, y)
+            y -= 3 * mm
+
+            self._draw_dados_adicionais(c, venda, y)
+
+            c.save()
+            return output_path
+
+        except Exception as e:
+            print(f"[PDF] ERRO: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def _text_center(self, c, x, y, text, font="Helvetica", size=8, bold=False):
+        if bold:
+            font = font + "-Bold"
+        c.setFont(font, size)
+        tw = c.stringWidth(str(text), font, size)
+        c.drawString(x - tw / 2, y, str(text))
+
+    def _label_value(self, c, x, y, label, value, label_size=6, value_size=8, value_bold=False):
+        c.setFillColorRGB(0.3, 0.3, 0.3)
+        c.setFont("Helvetica-Bold", label_size)
+        c.drawString(x, y, str(label))
+        c.setFillColorRGB(0, 0, 0)
+        font = "Helvetica-Bold" if value_bold else "Helvetica"
+        c.setFont(font, value_size)
+        c.drawString(x, y - value_size - 1, str(value))
+
+    def _draw_header(self, c, venda, y_start):
+        x = self.margin
+        y = y_start
+        w_total = self.page_width - 2 * self.margin
+        h = 24 * mm
+
+        c.setFillColorRGB(0.95, 0.95, 0.95)
+        c.rect(x, y - h, w_total, h, stroke=0, fill=1)
+        c.setFillColorRGB(0, 0, 0)
+        c.setLineWidth(1)
+        c.rect(x, y - h, w_total, h, stroke=1, fill=0)
+
+        cx = x + w_total / 2
+        cy = y - 6 * mm
+        self._text_center(c, cx, cy, "RECIBO / COMPROVANTE", size=14, bold=True)
+        cy -= 5 * mm
+        numero_doc = self._safe_str(self._get_val(venda, 'numero', 'numero_venda'), '000')
+        self._text_center(c, cx, cy, f"Nº {numero_doc}", size=12, bold=True)
+        cy -= 4 * mm
+        self._text_center(c, cx, cy, "DOCUMENTO NÃO FISCAL", size=8)
+
+        # STATUS BADGE
+        status = self._safe_str(self._get_val(venda, 'status'), 'PENDENTE').upper()
+        tipo_doc = self._safe_str(self._get_val(venda, 'tipo_documento'), 'VENDA').upper()
+
+        status_colors = {
+            'PENDENTE': (0.95, 0.65, 0.15), 'APROVADO': (0.22, 0.65, 0.22),
+            'REJEITADO': (0.85, 0.20, 0.20), 'PAGO': (0.15, 0.55, 0.85),
+            'CONVERTIDO': (0.45, 0.30, 0.75), 'ENTREGUE': (0.10, 0.60, 0.50),
+            'CANCELADO': (0.50, 0.50, 0.50),
+        }
+        tipo_colors = {
+            'VENDA': (0.15, 0.55, 0.85), 'ORÇAMENTO': (0.85, 0.55, 0.15),
+            'PEDIDO': (0.45, 0.30, 0.75),
+        }
+
+        st_color = status_colors.get(status, (0.50, 0.50, 0.50))
+        tp_color = tipo_colors.get(tipo_doc, (0.30, 0.30, 0.30))
+
+        badge_w = 30 * mm
+        badge_h = 6 * mm
+        badge_x = x + w_total - badge_w - 3 * mm
+        badge_y = y - 6 * mm
+
+        c.setFillColorRGB(*tp_color)
+        c.roundRect(badge_x, badge_y - badge_h, badge_w, badge_h, 2*mm, stroke=0, fill=1)
+        c.setFillColorRGB(1, 1, 1)
+        c.setFont("Helvetica-Bold", 8)
+        tw = c.stringWidth(tipo_doc, "Helvetica-Bold", 8)
+        c.drawString(badge_x + (badge_w - tw)/2, badge_y - badge_h + 2.2*mm, tipo_doc)
+
+        badge_y2 = y - 13 * mm
+        c.setFillColorRGB(*st_color)
+        c.roundRect(badge_x, badge_y2 - badge_h, badge_w, badge_h, 2*mm, stroke=0, fill=1)
+        c.setFillColorRGB(1, 1, 1)
+        c.setFont("Helvetica-Bold", 8)
+        tw = c.stringWidth(status, "Helvetica-Bold", 8)
+        c.drawString(badge_x + (badge_w - tw)/2, badge_y2 - badge_h + 2.2*mm, status)
+
+        c.setFillColorRGB(0, 0, 0)
+        return y - h
+
+    def _draw_emitente(self, c, y_start):
+        x = self.margin
+        y = y_start
+        w = self.page_width - 2 * self.margin
+        h = 24 * mm
+        c.setLineWidth(1)
+        c.rect(x, y - h, w, h, stroke=1, fill=0)
+        c.setLineWidth(0.5)
+        c.line(x, y - h / 2, x + w, y - h / 2)
+        col1 = x + w * 0.50
+        col2 = x + w * 0.75
+        c.line(col1, y, col1, y - h / 2)
+        c.line(col2, y, col2, y - h / 2)
+        c.line(col1, y - h / 2, col1, y - h)
+        c.line(col2, y - h / 2, col2, y - h)
+        ly = y - 5 * mm
+        self._label_value(c, x + 2 * mm, ly, "NOME / RAZÃO SOCIAL",
+                          self._safe_str(self.loja_config.get('nome'), 'FALL CONSTRUÇÕES'))
+        self._label_value(c, col1 + 2 * mm, ly, "CNPJ",
+                          self._safe_str(self.loja_config.get('cnpj'), '57.839.618/0001-67'))
+        self._label_value(c, col2 + 2 * mm, ly, "INSCRIÇÃO ESTADUAL",
+                          self._safe_str(self.loja_config.get('ie'), 'ISENTO'))
+        ly2 = y - h / 2 - 5 * mm
+        self._label_value(c, x + 2 * mm, ly2, "ENDEREÇO",
+                          self._safe_str(self.loja_config.get('endereco'), 'Av. Dom Helder Câmara, 3691'))
+        self._label_value(c, col1 + 2 * mm, ly2, "MUNICÍPIO",
+                          self._safe_str(self.loja_config.get('cidade'), 'Teresina'))
+        self._label_value(c, col2 + 2 * mm, ly2, "UF",
+                          self._safe_str(self.loja_config.get('uf'), 'PI'))
+        return y - h
+
+    def _draw_destinatario(self, c, venda, y_start):
+        x = self.margin
+        y = y_start
+        w = self.page_width - 2 * self.margin
+        h = 34 * mm
+        c.setLineWidth(1)
+        c.rect(x, y - h, w, h, stroke=1, fill=0)
+        c.setLineWidth(0.5)
+        c.line(x, y - h / 3, x + w, y - h / 3)
+        c.line(x, y - 2 * h / 3, x + w, y - 2 * h / 3)
+        col1 = x + w * 0.50
+        col2 = x + w * 0.75
+        c.line(col1, y, col1, y - h / 3)
+        c.line(col2, y, col2, y - h / 3)
+        col3 = x + w * 0.35
+        col4 = x + w * 0.60
+        col5 = x + w * 0.80
+        c.line(col3, y - h / 3, col3, y - 2 * h / 3)
+        c.line(col4, y - h / 3, col4, y - 2 * h / 3)
+        c.line(col5, y - h / 3, col5, y - 2 * h / 3)
+
+        cliente_nome = self._safe_str(self._get_val(venda, 'cliente_nome', 'nome_cliente', 'cliente'), "CONSUMIDOR")
+        cpf_cnpj = self._safe_str(self._get_val(venda, 'cpf_cnpj', 'cpf', 'cnpj'), '---')
+        data_str = datetime.now().strftime('%d/%m/%Y')
+        endereco = self._safe_str(self._get_val(venda, 'cliente_endereco', 'endereco'), 'Não informado')
+        cidade = self._safe_str(self._get_val(venda, 'cliente_cidade', 'cidade'), 'Não informado')
+        uf = self._safe_str(self._get_val(venda, 'cliente_uf', 'uf'), 'PI')
+        telefone = self._safe_str(self._get_val(venda, 'cliente_telefone', 'telefone'), '---')
+        forma_pgto = self._safe_str(self._get_val(venda, 'forma_pagamento'), '---').upper()
+        vendedor = self._safe_str(self._get_val(venda, 'vendedor', 'usuario'), '---')
+
+        ly = y - 5 * mm
+        self._label_value(c, x + 2 * mm, ly, "NOME / RAZÃO SOCIAL", cliente_nome)
+        self._label_value(c, col1 + 2 * mm, ly, "CNPJ / CPF", cpf_cnpj)
+        self._label_value(c, col2 + 2 * mm, ly, "DATA DA EMISSÃO", data_str)
+        ly2 = y - h / 3 - 5 * mm
+        self._label_value(c, x + 2 * mm, ly2, "ENDEREÇO", endereco)
+        self._label_value(c, col3 + 2 * mm, ly2, "MUNICÍPIO", cidade)
+        self._label_value(c, col4 + 2 * mm, ly2, "UF", uf)
+        self._label_value(c, col5 + 2 * mm, ly2, "TELEFONE", telefone)
+        ly3 = y - 2 * h / 3 - 5 * mm
+        hora_str = datetime.now().strftime('%H:%M:%S')
+        self._label_value(c, x + 2 * mm, ly3, "DATA DA SAÍDA", data_str)
+        self._label_value(c, col3 + 2 * mm, ly3, "HORA DA SAÍDA", hora_str)
+        self._label_value(c, col4 + 2 * mm, ly3, "FORMA PAGAMENTO", forma_pgto)
+        self._label_value(c, col5 + 2 * mm, ly3, "VENDEDOR", vendedor)
+        return y - h
+
+    def _draw_resumo(self, c, venda, y_start):
+        x = self.margin
+        y = y_start
+        w = self.page_width - 2 * self.margin
+        h = 20 * mm
+        c.setLineWidth(1)
+        c.rect(x, y - h, w, h, stroke=1, fill=0)
+        c.setLineWidth(0.5)
+        col1 = x + w * 0.35
+        col2 = x + w * 0.70
+        c.line(col1, y, col1, y - h)
+        c.line(col2, y, col2, y - h)
+        subtotal = self._safe_float(self._get_val(venda, 'subtotal'), 0)
+        desconto = self._safe_float(self._get_val(venda, 'desconto'), 0)
+        total = self._safe_float(self._get_val(venda, 'total'), 0)
+        ly = y - 5 * mm
+        c.setFillColorRGB(0.3, 0.3, 0.3)
+        c.setFont("Helvetica-Bold", 5)
+        c.drawString(x + 2 * mm, ly, "SUBTOTAL")
+        c.drawString(col1 + 2 * mm, ly, "DESCONTO")
+        c.drawString(col2 + 2 * mm, ly, "TOTAL GERAL")
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x + 2 * mm, ly - 10, f"R$ {subtotal:.2f}")
+        c.drawString(col1 + 2 * mm, ly - 10, f"R$ {desconto:.2f}")
+        c.drawString(col2 + 2 * mm, ly - 10, f"R$ {total:.2f}")
+        return y - h
+
+    def _draw_produtos(self, c, venda, y_start):
+        x = self.margin
+        y = y_start
+        w = self.page_width - 2 * self.margin
+        itens = venda.get("itens", [])
+        row_height = 6 * mm
+        header_height = 8 * mm
+        h = header_height + len(itens) * row_height + 2 * mm
+        if h < 30 * mm:
+            h = 30 * mm
+        c.setLineWidth(1)
+        c.rect(x, y - h, w, h, stroke=1, fill=0)
+        c.setFillColorRGB(0.9, 0.9, 0.9)
+        c.rect(x, y - header_height, w, header_height, stroke=0, fill=1)
+        c.setFillColorRGB(0, 0, 0)
+        cols_x = [x, x + 20*mm, x + 95*mm, x + 110*mm, x + 125*mm, x + 150*mm, x + w]
+        c.setLineWidth(0.5)
+        for cx in cols_x[1:-1]:
+            c.line(cx, y, cx, y - h)
+        c.line(x, y - header_height, x + w, y - header_height)
+        headers = ["CÓDIGO", "DESCRIÇÃO", "UN", "QTD", "V. UNIT.", "V. TOTAL"]
+        for i, h_text in enumerate(headers):
+            if i >= len(cols_x) - 1: break
+            cx = cols_x[i] + 1 * mm
+            c.setFont("Helvetica-Bold", 6)
+            c.drawString(cx, y - 5 * mm, h_text)
+        c.setFont("Helvetica", 6)
+        for idx, item in enumerate(itens):
+            iy = y - header_height - (idx + 1) * row_height + 2 * mm
+            nome = self._safe_str(item.get('produto_nome', item.get('nome', 'Item')))[:40]
+            codigo = self._safe_str(item.get('codigo', '---'))
+            qtd = self._safe_float(item.get('quantidade', 1))
+            preco = self._safe_float(item.get('preco_unitario', 0))
+            total_item = self._safe_float(item.get('subtotal', preco * qtd))
+            vals = [str(codigo)[:12], nome[:38], "UN", str(int(qtd)), f"R$ {preco:.2f}", f"R$ {total_item:.2f}"]
+            for i, val in enumerate(vals):
+                if i >= len(cols_x) - 1: break
+                cx = cols_x[i] + 1 * mm
+                if i >= 4:
+                    tw = c.stringWidth(val, "Helvetica", 6)
+                    c.drawString(cx + 15*mm - tw - 2*mm, iy, val)
+                else:
+                    c.drawString(cx, iy, val)
+            c.setLineWidth(0.3)
+            c.line(x, y - header_height - (idx + 1) * row_height, x + w, y - header_height - (idx + 1) * row_height)
+        return y - h
+
+    def _draw_dados_adicionais(self, c, venda, y_start):
+        x = self.margin
+        y = y_start
+        w = self.page_width - 2 * self.margin
+        h = 28 * mm
+        c.setLineWidth(1)
+        c.rect(x, y - h, w, h, stroke=1, fill=0)
+        c.setLineWidth(0.5)
+        c.line(x + w * 0.65, y, x + w * 0.65, y - h)
+        c.setFillColorRGB(0.9, 0.9, 0.9)
+        c.rect(x, y - 5 * mm, w * 0.65, 5 * mm, stroke=0, fill=1)
+        c.rect(x + w * 0.65, y - 5 * mm, w * 0.35, 5 * mm, stroke=0, fill=1)
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont("Helvetica-Bold", 6)
+        c.drawString(x + 2 * mm, y - 3.5 * mm, "OBSERVAÇÕES / INFORMAÇÕES COMPLEMENTARES")
+        c.drawString(x + w * 0.65 + 2 * mm, y - 3.5 * mm, "ASSINATURA DO CLIENTE")
+        forma = self._safe_str(self._get_val(venda, 'forma_pagamento'), 'dinheiro').upper()
+        numero = self._safe_str(self._get_val(venda, 'numero', 'numero_venda'), '---')
+        vendedor = self._safe_str(self._get_val(venda, 'vendedor', 'usuario'), '---')
+        obs = self._safe_str(self._get_val(venda, 'observacao', 'obs'), '')
+        info = f"FORMA: {forma} | Nº: {numero} | VENDEDOR: {vendedor}"
+        if obs:
+            info += f" | OBS: {obs}"
+        if len(info) > 120:
+            info = info[:117] + "..."
+        c.setFont("Helvetica", 5.5)
+        c.drawString(x + 2 * mm, y - 10 * mm, info)
+        c.drawString(x + 2 * mm, y - 14 * mm, "FALL CONSTRUÇÕES - Documento não fiscal para controle interno")
+        c.drawString(x + 2 * mm, y - 18 * mm, "Não possui valor fiscal. Conserve este comprovante para eventuais trocas.")
+        c.drawString(x + 2 * mm, y - 22 * mm, "Trocas em até 7 dias com este documento e produto sem uso.")
+        c.line(x + w * 0.65 + 5 * mm, y - 15 * mm, x + w - 5 * mm, y - 15 * mm)
+        c.setFont("Helvetica", 5)
+        c.drawString(x + w * 0.65 + 5 * mm, y - 18 * mm, "Assinatura do Cliente / Recebedor")
+
 
 try:
     from utils.logger import Logger
@@ -14,19 +358,10 @@ except Exception:
         def log(cls, msg, level="INFO"):
             print(f"[{level}] {msg}")
 
-try:
-    from utils.danfe_generator import DanfeGenerator
-    DANFE_AVAILABLE = True
-except ImportError:
-    DANFE_AVAILABLE = False
-    print("[AVISO] ReportLab nao instalado. Usando fallback de comprovante texto.")
-
-
 class HistoricoVendasView(BaseView):
     def __init__(self, parent, controllers):
         super().__init__(parent, None)
         self.controllers = controllers
-        self.danfe_gen = DanfeGenerator(LOJA_CONFIG) if DANFE_AVAILABLE else None
         self.build()
 
     def build(self):
@@ -278,61 +613,56 @@ class HistoricoVendasView(BaseView):
         self._escolher_tipo_comprovante(v["id"])
 
     def _escolher_tipo_comprovante(self, venda_id):
-        dlg = tk.Toplevel(self.parent)
-        dlg.title("Escolher Tipo de Comprovante")
-        dlg.geometry("400x220")
-        dlg.configure(bg=ModernTheme.BG)
-        dlg.resizable(False, False)
-        dlg.transient(self.parent)
-        dlg.grab_set()
+        """Gera PDF profissional da venda e abre automaticamente"""
+        try:
+            venda = self.controllers["venda"].obter_venda(venda_id)
+            if not venda:
+                messagebox.showwarning("Aviso", "Venda não encontrada.")
+                return
 
-        tk.Frame(dlg, bg=ModernTheme.PRIMARY, height=4).pack(fill=tk.X)
+            # Garante que tem itens
+            if not venda.get("itens"):
+                vd = self.controllers["venda"].obter_venda(venda_id)
+                if vd and vd.get("itens"):
+                    venda["itens"] = vd["itens"]
 
-        tk.Label(dlg, text="📄  Tipo de Comprovante",
-                 font=ModernTheme.FONT_XL,
-                 bg=ModernTheme.BG, fg=ModernTheme.TEXT).pack(pady=(16, 8))
+            # Diretório seguro
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            pdf_path = os.path.join(temp_dir, f"venda_{venda.get('numero_venda', '000')}.pdf")
+            pdf_path = os.path.normpath(pdf_path)
 
-        tk.Label(dlg, text="Escolha como deseja reimprimir a venda:",
-                 font=ModernTheme.FONT_BASE,
-                 bg=ModernTheme.BG, fg=ModernTheme.TEXT_MUTED).pack(pady=(0, 16))
+            Logger.log(f"Gerando PDF em: {pdf_path}", "INFO")
 
-        btn_frame = tk.Frame(dlg, bg=ModernTheme.BG)
-        btn_frame.pack(pady=8)
+            # Gera PDF com status
+            gerador = ReciboPDFGenerator(LOJA_CONFIG)
+            gerador.gerar(venda, output_path=pdf_path, tipo_documento="VENDA")
 
-        def escolher_danfe():
-            dlg.destroy()
-            self._imprimir_danfe(venda_id)
+            if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                Logger.log(f"PDF criado: {pdf_path}", "SUCCESS")
 
-        def escolher_cupom():
-            dlg.destroy()
-            self._imprimir_comprovante(venda_id)
+                # Abre PDF
+                try:
+                    if os.name == "nt":
+                        os.startfile(pdf_path)
+                except Exception as e2:
+                    Logger.log(f"Não abriu: {e2}", "WARNING")
 
-        tk.Button(btn_frame, text="📋  DANFE (PDF)",
-                  command=escolher_danfe,
-                  bg=ModernTheme.INFO, fg="white",
-                  font=("Segoe UI", 12, "bold"),
-                  bd=0, padx=24, pady=12, cursor="hand2",
-                  activebackground="#1e40af",
-                  activeforeground="white").pack(side=tk.LEFT, padx=6)
+                messagebox.showinfo(
+                    "PDF Gerado",
+                    f"Venda salva em PDF!\n\nArquivo: {os.path.basename(pdf_path)}\nLocal: {temp_dir}"
+                )
+            else:
+                raise Exception("PDF não foi criado")
 
-        tk.Button(btn_frame, text="🧾  Cupom Fiscal",
-                  command=escolher_cupom,
-                  bg=ModernTheme.SUCCESS, fg="white",
-                  font=("Segoe UI", 12, "bold"),
-                  bd=0, padx=24, pady=12, cursor="hand2",
-                  activebackground="#15803d",
-                  activeforeground="white").pack(side=tk.LEFT, padx=6)
-
-        tk.Button(dlg, text="Cancelar",
-                  command=dlg.destroy,
-                  bg=ModernTheme.BG, fg=ModernTheme.TEXT_MUTED,
-                  font=ModernTheme.FONT_BASE,
-                  bd=0, padx=16, pady=6, cursor="hand2").pack(pady=(12, 8))
-
-        dlg.update_idletasks()
-        x = (dlg.winfo_screenwidth() // 2) - (dlg.winfo_width() // 2)
-        y = (dlg.winfo_screenheight() // 2) - (dlg.winfo_height() // 2)
-        dlg.geometry(f"+{x}+{y}")
+        except Exception as e:
+            Logger.log(f"Erro PDF: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror(
+                "Erro",
+                f"Não foi possível gerar PDF.\n\n{e}\n\nVerifique: pip install reportlab"
+            )
 
     def _imprimir_danfe(self, venda_id=None):
         if venda_id is None:
@@ -348,7 +678,7 @@ class HistoricoVendasView(BaseView):
             if vd and vd.get("itens"):
                 venda["itens"] = vd["itens"]
 
-        if DANFE_AVAILABLE and self.danfe_gen:
+        if False:  # DANFE removido, usar ReciboPDFGenerator
             try:
                 os.makedirs("comprovantes", exist_ok=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -389,7 +719,7 @@ class HistoricoVendasView(BaseView):
             if vd and vd.get("itens"):
                 venda["itens"] = vd["itens"]
 
-        if DANFE_AVAILABLE and self.danfe_gen:
+        if False:  # DANFE removido, usar ReciboPDFGenerator
             try:
                 os.makedirs("comprovantes", exist_ok=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -559,81 +889,5 @@ class HistoricoVendasView(BaseView):
         self._escolher_tipo_comprovante(venda["id"])
 
     def _janela_comprovante(self, venda):
-        comp = tk.Toplevel(self.parent)
-        comp.title("Comprovante  " + venda.get('numero_venda', ''))
-        comp.geometry("460x680")
-        comp.configure(bg="white")
-
-        txt = tk.Text(comp, font=("Courier", 11), bg="white",
-                      fg="#1e293b", wrap=tk.WORD, padx=20, pady=20,
-                      bd=0, relief=tk.FLAT)
-        txt.pack(fill=tk.BOTH, expand=True)
-
-        L = lambda s: txt.insert(tk.END, s + "\n")
-        L("=" * 40)
-        L("  " + LOJA_CONFIG['nome'])
-        L("  CNPJ: " + LOJA_CONFIG['cnpj'])
-        L("  " + LOJA_CONFIG['endereco'])
-        L("=" * 40)
-        L("")
-        L("  CUPOM NAO FISCAL – REIMPRESSAO")
-        L("  Venda:  " + venda.get('numero_venda', ''))
-        L("  Data:   " + str(venda.get('data_venda', ''))[:16])
-        if venda.get("cliente_nome"):
-            L("  Cliente: " + venda['cliente_nome'])
-        L("-" * 40)
-        L("{:<22}{:>4}  {:>8}".format("ITEM", "QTD", "PRECO"))
-        L("-" * 40)
-        for item in venda.get("itens", []):
-            nome = str(item.get("produto_nome", ""))[:20]
-            qtd  = str(item.get("quantidade", 0))
-            preco = f"{float(item.get('preco_unitario', 0) or 0):.2f}"
-            L("{:<22}{:>4}  R${:>7}".format(nome, qtd, preco))
-        L("-" * 40)
-        L("{:<30}R$ {:.2f}".format("SUBTOTAL:", float(venda.get('subtotal', 0) or 0)))
-        L("{:<30}R$ {:.2f}".format("DESCONTO:", float(venda.get('desconto', 0) or 0)))
-        L("{:<30}R$ {:.2f}".format("TOTAL:", float(venda.get('total', 0) or 0)))
-        L("-" * 40)
-        L("  Pagamento: " + str(venda.get('forma_pagamento', '')).upper())
-        L("")
-        L("=" * 40)
-        L("  OBRIGADO PELA PREFERENCIA!")
-        L("=" * 40)
-        txt.config(state=tk.DISABLED)
-
-        btn_row = tk.Frame(comp, bg="white")
-        btn_row.pack(pady=10)
-
-        def _imprimir():
-            try:
-                tmp = os.path.join(os.environ.get("TEMP", "/tmp"),
-                                   "reimpressao.txt")
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write(txt.get(1.0, tk.END))
-                if os.name == "nt":
-                    os.startfile(tmp, "print")
-                else:
-                    subprocess.run(["lp", tmp])
-                messagebox.showinfo("Impressao", "Enviado para a impressora!")
-            except Exception as e:
-                messagebox.showerror("Erro", str(e))
-
-        def _salvar():
-            from tkinter import filedialog
-            fn = filedialog.asksaveasfilename(
-                defaultextension=".txt",
-                filetypes=[("Texto", "*.txt")],
-                initialfile="venda_" + venda.get('numero_venda', '') + ".txt")
-            if fn:
-                with open(fn, "w", encoding="utf-8") as f:
-                    f.write(txt.get(1.0, tk.END))
-                messagebox.showinfo("Salvo", "Arquivo salvo em:\n" + fn)
-
-        tk.Button(btn_row, text="🖨️  Imprimir", command=_imprimir,
-                  bg=ModernTheme.PRIMARY, fg="white",
-                  font=("Segoe UI", 10, "bold"),
-                  bd=0, padx=16, pady=8, cursor="hand2").pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_row, text="💾  Salvar", command=_salvar,
-                  bg=ModernTheme.SUCCESS, fg="white",
-                  font=("Segoe UI", 10, "bold"),
-                  bd=0, padx=16, pady=8, cursor="hand2").pack(side=tk.LEFT, padx=5)
+        """Fallback: gera PDF ao invés de comprovante texto"""
+        self._escolher_tipo_comprovante(venda.get("id"))
